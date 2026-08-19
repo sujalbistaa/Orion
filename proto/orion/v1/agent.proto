@@ -1,0 +1,202 @@
+syntax = "proto3";
+
+package orion.v1;
+
+option go_package = "github.com/sujalbistaa/orion/pkg/proto/orionv1;orionv1";
+
+import "google/protobuf/timestamp.proto";
+
+// NodeService is the control plane's interface to node agents.
+//
+// Design note: Sync is a unary, full-state exchange rather than a bidirectional
+// stream of deltas. The agent sends everything it observes; the control plane
+// replies with the complete set of workloads that node should be running.
+//
+// That choice is deliberate. A delta stream is more efficient and strictly
+// worse here: it requires both sides to agree on a starting point, to detect
+// gaps, and to resynchronize after any disconnection — which is most of the
+// complexity of a replication protocol, re-implemented for a link that carries
+// a few kilobytes a second. With full-state sync, a lost message costs one
+// interval, an agent restart needs no special handling, and a control-plane
+// failover is invisible. The reconciliation model is level-triggered
+// everywhere else in Orion; this keeps the node boundary consistent with it.
+service NodeService {
+  // Register announces a node and its capacity. It is idempotent: an agent
+  // that restarts calls it again and keeps its identity and its workloads.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Sync exchanges observed state for desired state. Called every heartbeat
+  // interval.
+  rpc Sync(SyncRequest) returns (SyncResponse);
+
+  // Deregister is called on graceful shutdown so the control plane can move
+  // workloads immediately instead of waiting for the heartbeat to time out.
+  rpc Deregister(DeregisterRequest) returns (DeregisterResponse);
+}
+
+message Resources {
+  // CPU in thousandths of a core.
+  int64 cpu_millis = 1;
+  int64 memory_bytes = 2;
+}
+
+message RuntimeInfo {
+  string name = 1;
+  string version = 2;
+  string os = 3;
+  string arch = 4;
+  string kernel_version = 5;
+}
+
+message RegisterRequest {
+  string node_name = 1;
+  // address is host:port where this agent serves its local API (logs).
+  string address = 2;
+  map<string, string> labels = 3;
+
+  Resources capacity = 4;
+  // allocatable is capacity minus the reservation the agent keeps for itself
+  // and the operating system.
+  Resources allocatable = 5;
+
+  RuntimeInfo runtime = 6;
+  // agent_started_at lets the control plane distinguish an agent restart from
+  // a continuing session.
+  google.protobuf.Timestamp agent_started_at = 7;
+  string agent_version = 8;
+}
+
+message RegisterResponse {
+  string node_uid = 1;
+  // heartbeat_interval and self_fence_timeout are assigned by the control
+  // plane so that the failure-detection window and the agent's self-fencing
+  // deadline are configured in one place and cannot drift apart.
+  int64 heartbeat_interval_ms = 2;
+  // self_fence_timeout_ms is how long the agent may run without reaching the
+  // control plane before it must stop its own workloads. It is always shorter
+  // than the control plane's eviction deadline, which is what prevents a
+  // partitioned node from running containers the cluster has already replaced.
+  int64 self_fence_timeout_ms = 3;
+  string cluster_id = 4;
+}
+
+message WorkloadStatus {
+  string name = 1;
+  string uid = 2;
+  // phase is an Orion WorkloadPhase name: Starting, Running, Failed, ...
+  string phase = 3;
+  // health is Healthy, Unhealthy or Unknown.
+  string health = 4;
+  string container_id = 5;
+  string reason = 6;
+  string message = 7;
+  int32 restart_count = 8;
+  // exit_code is only meaningful once the container has stopped; has_exit_code
+  // distinguishes "exited with 0" from "has not exited".
+  int32 exit_code = 9;
+  bool has_exit_code = 10;
+  google.protobuf.Timestamp started_at = 11;
+  google.protobuf.Timestamp finished_at = 12;
+  Resources usage = 13;
+  // host_ports maps container port -> published host port.
+  map<int32, int32> host_ports = 14;
+}
+
+message NodeCondition {
+  string type = 1;
+  bool status = 2;
+  string reason = 3;
+  string message = 4;
+}
+
+message SyncRequest {
+  string node_name = 1;
+  string node_uid = 2;
+  Resources capacity = 3;
+  Resources allocatable = 4;
+  // usage is measured consumption across all containers on this node.
+  Resources usage = 5;
+  RuntimeInfo runtime = 6;
+  repeated NodeCondition conditions = 7;
+  // workloads is every workload this agent currently observes, including ones
+  // it has finished tearing down. The control plane treats it as complete.
+  repeated WorkloadStatus workloads = 8;
+}
+
+message Port {
+  string name = 1;
+  int32 container = 2;
+  int32 host = 3;
+  string protocol = 4;
+}
+
+message EnvVar {
+  string name = 1;
+  string value = 2;
+}
+
+message HealthCheck {
+  string kind = 1; // http | tcp | process
+  string path = 2;
+  int32 port = 3;
+  int64 initial_delay_ms = 4;
+  int64 interval_ms = 5;
+  int64 timeout_ms = 6;
+  int32 failure_threshold = 7;
+  int32 success_threshold = 8;
+}
+
+// AssignedWorkload is the complete specification the agent needs to run one
+// container. It is self-contained on purpose: the agent never has to look
+// anything else up, so it can keep working through a control-plane outage.
+message AssignedWorkload {
+  string name = 1;
+  string uid = 2;
+  string image = 3;
+  repeated string command = 4;
+  repeated string args = 5;
+  repeated EnvVar env = 6;
+  repeated Port ports = 7;
+
+  Resources request = 8;
+  Resources limit = 9;
+
+  string restart_policy = 10;
+  int64 termination_grace_period_ms = 11;
+  HealthCheck health_check = 12;
+
+  // desired_state is Running or Terminated. Terminated means the agent should
+  // stop and remove the container; the workload record stays until the agent
+  // confirms it is gone.
+  string desired_state = 13;
+  map<string, string> labels = 14;
+}
+
+message SyncResponse {
+  // workloads is the complete set this node should be running. Anything the
+  // agent has that is absent from this list is no longer wanted and must be
+  // removed — which is how an orphaned container left by a crashed agent gets
+  // cleaned up.
+  repeated AssignedWorkload workloads = 1;
+
+  // accepted is false when the control plane does not recognize this node,
+  // for example after its record was deleted. The agent must re-register.
+  bool accepted = 2;
+  string reject_reason = 3;
+
+  int64 heartbeat_interval_ms = 4;
+  int64 self_fence_timeout_ms = 5;
+  // leader_address is set when this replica is not the leader, so the agent
+  // can reconnect without waiting for a DNS or load-balancer update.
+  string leader_address = 6;
+}
+
+message DeregisterRequest {
+  string node_name = 1;
+  string node_uid = 2;
+  string reason = 3;
+}
+
+message DeregisterResponse {
+  bool accepted = 1;
+}
