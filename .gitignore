@@ -1,0 +1,24 @@
+# Build output
+/bin/
+/dist/
+
+# Local cluster state (Raft log, snapshots)
+/.orion/
+*.db
+
+# Test and profiling artifacts
+*.test
+*.out
+coverage.html
+/test/results/
+
+# Frontend
+/web/node_modules/
+/web/dist/
+/web/.vite/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+.claude/
