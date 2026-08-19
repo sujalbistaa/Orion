@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w \
+    -X github.com/sujalbistaa/orion/internal/version.Version=${VERSION} \
+    -X github.com/sujalbistaa/orion/internal/version.Commit=${COMMIT} \
+    -X github.com/sujalbistaa/orion/internal/version.BuildDate=${BUILD_DATE}" \
+    -o /out/orion-agent ./cmd/orion-agent
+
+# The agent drives containers on the same host through the Docker socket
+# (Docker-outside-of-Docker), and socket access requires either root or a GID
+# matched to the host's docker group at run time. distroless/base (not the
+# nonroot variant) keeps the image minimal while running as root, which is
+# the same trust boundary a Docker socket mount already assumes.
+FROM gcr.io/distroless/base-debian12
+COPY --from=build /out/orion-agent /usr/local/bin/orion-agent
+EXPOSE 7090 9100
+ENTRYPOINT ["/usr/local/bin/orion-agent"]

@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: orion-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orion-server:7070"]
+
+  - job_name: orion-agent
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "orion-agent-1:9100"
+          - "orion-agent-2:9100"
+          - "orion-agent-3:9100"

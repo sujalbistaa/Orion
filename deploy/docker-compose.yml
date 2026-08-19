@@ -1,0 +1,76 @@
+services:
+  orion-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.server
+    command:
+      - -log-format=text
+      - -data-dir=/var/lib/orion
+    environment:
+      - ORION_API_TOKEN=${ORION_API_TOKEN:-}
+      - ORION_API_VIEWER_TOKEN=${ORION_API_VIEWER_TOKEN:-}
+    ports:
+      - "7070:7070" # HTTP API + console
+    volumes:
+      - orion-server-data:/var/lib/orion
+
+  # distroless images ship no shell or wget, so there is no in-container
+  # healthcheck to gate on. Agents already retry registration with backoff
+  # (see pkg/agent), so depends_on only needs to order container start, not
+  # wait for readiness.
+  orion-agent-1:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    command:
+      - -node-name=agent-1
+      - -server=orion-server:7071
+      - -advertise=orion-agent-1:7090
+      - -metrics-addr=:9100
+      - -log-format=text
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - orion-server
+
+  orion-agent-2:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    command:
+      - -node-name=agent-2
+      - -server=orion-server:7071
+      - -advertise=orion-agent-2:7090
+      - -metrics-addr=:9100
+      - -log-format=text
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - orion-server
+
+  orion-agent-3:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent
+    command:
+      - -node-name=agent-3
+      - -server=orion-server:7071
+      - -advertise=orion-agent-3:7090
+      - -metrics-addr=:9100
+      - -log-format=text
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - orion-server
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - orion-server
+
+volumes:
+  orion-server-data:

@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+
+# The console is built here rather than requiring `make web-build` as a
+# manual pre-step, so `docker build` on a fresh clone produces a complete,
+# working image on its own.
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.25-alpine AS build
+WORKDIR /src
+RUN apk add --no-cache git
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=web /web/dist ./web/dist
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w \
+    -X github.com/sujalbistaa/orion/internal/version.Version=${VERSION} \
+    -X github.com/sujalbistaa/orion/internal/version.Commit=${COMMIT} \
+    -X github.com/sujalbistaa/orion/internal/version.BuildDate=${BUILD_DATE}" \
+    -o /out/orion-server ./cmd/orion-server
+RUN mkdir -p /data && chown 65532:65532 /data
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/orion-server /usr/local/bin/orion-server
+# distroless has no shell to chown a mounted volume at run time, so the data
+# directory is created and owned by the nonroot user (65532:65532) in the
+# build stage; an empty named volume mounted over it inherits that ownership
+# from the image layer beneath, which is Docker's documented behavior for
+# first-use volumes.
+COPY --from=build --chown=65532:65532 /data /var/lib/orion
+USER nonroot:nonroot
+EXPOSE 7070 7071 7072
+ENTRYPOINT ["/usr/local/bin/orion-server"]
