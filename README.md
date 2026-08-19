@@ -4,7 +4,7 @@ A container orchestrator built from scratch in Go: its own Raft consensus implem
 a resource-aware scheduler, self-healing controllers, self-fencing node agents, an L4
 service proxy, and a fault-injection framework that finds its own bugs.
 
-[![CI](https://github.com/sujalbistaa/orion/actions/workflows/ci.yml/badge.svg)](https://github.com/sujalbistaa/orion/actions/workflows/ci.yml)
+
 [![Go](https://img.shields.io/badge/go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white)](go.mod)
 [![Docker](https://img.shields.io/badge/runtime-Docker%2028-2496ED?style=flat-square&logo=docker&logoColor=white)](pkg/runtime)
 
