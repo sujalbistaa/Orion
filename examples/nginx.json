@@ -1,0 +1,14 @@
+{
+  "name": "nginx-example",
+  "labels": { "app": "nginx-example" },
+  "spec": {
+    "image": "nginx:1.27-alpine",
+    "ports": [{ "container": 80 }],
+    "resources": {
+      "request": { "cpu": 100, "memory": 67108864 },
+      "limit": { "cpu": 250, "memory": 134217728 }
+    },
+    "restartPolicy": "Always",
+    "terminationGracePeriod": "10s"
+  }
+}
